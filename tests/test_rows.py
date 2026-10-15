@@ -36,6 +36,62 @@ class Rows(unittest.TestCase):
             ("wesnoth-devel", "1.19.24", True),
         )
 
+    def test_kept_only_beside_a_beta_is_the_main_line(self):
+        # firefox, 2026-10-15: Repology called 157.0.1 legacy because nixpkgs
+        # also has firefox-devedition 158.0b1; 158.0 was out.
+        entries = [
+            nix("firefox", "157.0.1", "legacy"),
+            nix("firefox-devedition", "158.0b1", "outdated"),
+            other("arch", "158.0", "newest"),
+            other("arch", "159.0b2", "devel"),
+        ]
+        rows = {
+            r["name"]: r
+            for r in self.rows(
+                project(
+                    "firefox", ["firefox", "firefox-devedition"], entries, "firefox"
+                )
+            )
+        }
+        firefox = rows["firefox"]
+        # And firefox-esr, kept beside the release, not the beta.
+        esr_entries = [
+            nix("firefox-esr", "153.4.0", "legacy"),
+            nix("firefox", "158.0", "newest"),
+            nix("firefox-devedition", "159.0b1", "devel"),
+            other("arch", "158.0", "newest"),
+        ]
+        esr = {
+            r["name"]: r
+            for r in self.rows(
+                project(
+                    "firefox",
+                    ["firefox-esr", "firefox", "firefox-devedition"],
+                    esr_entries,
+                    "firefox",
+                )
+            )
+        }["firefox-esr"]
+        self.assertEqual(esr["keptBeside"], {"attr": "firefox", "version": "158.0"})
+        self.assertEqual(
+            (firefox["nixStatus"], firefox["refVersion"], firefox["devel"]),
+            ("outdated", "158.0", False),
+        )
+        self.assertNotIn("keptBeside", firefox)
+        # Beside a newer stable release (gnumake42 beside gnumake): still kept.
+        kept = [
+            nix("gnumake42", "4.2.1", "legacy"),
+            nix("gnumake", "4.4.1", "newest"),
+            other("arch", "4.4.1", "newest"),
+        ]
+        rows = {
+            r["name"]: r
+            for r in self.rows(
+                project("gnumake", ["gnumake42", "gnumake"], kept, "gnumake")
+            )
+        }
+        self.assertEqual(rows["gnumake42"]["nixStatus"], "legacy")
+
     def test_kept_series_only_none_devel(self):
         # coq's project once its current version moved to rocq: every
         # series nixpkgs keeps is legacy. The newest is the stable one, not
@@ -555,6 +611,7 @@ class ChannelVersions(unittest.TestCase):
         153.4.0. Its status stays: still kept beside the newer line."""
         row, changed = self.row("legacy", "1.1esr")
         self.assertEqual(changed, ["p"])
+        self.assertNotIn("nixVulnerable", row)  # Repology's, for 1.0
         self.assertEqual(
             (row["nixVersion"], row["nixStatus"], row["repologyVersion"]),
             ("1.1esr", "legacy", "1.0"),

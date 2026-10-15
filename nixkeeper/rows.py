@@ -6,7 +6,7 @@ import re
 
 from . import config
 from .sources.nixpkgs import platforms
-from .versions import is_newer, version_key
+from .versions import is_newer, is_pre_release, version_key
 
 
 def search_term(attr):
@@ -147,7 +147,18 @@ def make_row(proj, name, attrs, nix, others, nixpkgs, devel):
             and e.get("version")
             and version_key(e["version"]) > version_key(nix.get("version") or "")
         ]
+        if newer and not devel and all(is_pre_release(e["version"]) for e in newer):
+            # Newer only as a beta nixpkgs also has (firefox beside
+            # firefox-devedition 158.0b1): Repology calls it legacy, but it's
+            # the main line, compared with the newest release like any.
+            ref = row["refVersion"]
+            behind = ref and is_newer(ref, nix.get("version") or "")
+            row["nixStatus"] = "outdated" if behind else "newest"
+            newer = []
         if newer:
+            # Beside its newer release rather than a beta, when nixpkgs has
+            # both (firefox-esr beside firefox 158.0, not firefox-devedition).
+            newer = [e for e in newer if not is_pre_release(e["version"])] or newer
             best = max(version_key(e["version"]) for e in newer)
             # Of those with that version, the plainest name (tracy, not tracy_0_14).
             top = min(
@@ -254,7 +265,8 @@ def channel_versions(rows, nixpkgs):
     Repology had. Only when the row's attributes agree on one version, and
     not when the channel's only adds letters to Repology's: Repology's rules
     drop those (thunderbird-esr-bin 153.3.1esr, which it has as 153.3.1).
-    Returns the names of the rows changed."""
+    Repology's vulnerable flag, for its version, goes with it. Returns the
+    names of the rows changed."""
     changed = []
     for row in rows:
         if row.get("nixStatus") not in CHANNEL_STATUSES or not row.get("nixVersion"):
@@ -270,6 +282,10 @@ def channel_versions(rows, nixpkgs):
             continue
         row["repologyVersion"] = theirs
         row["nixVersion"] = ours
+        # Repology's flag is for its version, not the channel's newer one
+        # (firefox-esr 153.4.0's, shown as 153.5.0esr's); the security
+        # tracker's and OSV's verdicts, checked against ours, stay.
+        row.pop("nixVulnerable", None)
         # Outdated against nothing Repology names (beads): left as it says.
         ref = row.get("refVersion")
         if row["nixStatus"] == "outdated" and ref and not is_newer(ref, ours):
